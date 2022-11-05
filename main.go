@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"os"
 	"path"
 	"strconv"
@@ -18,9 +19,17 @@ const (
 	KB = 1000
 )
 
-func traverseDir(hashes, duplicates map[string]string, dupeSize *int64, entries []os.FileInfo, directory string) {
-	for _, entry := range entries {
-		fullpath := path.Join(directory, entry.Name())
+type dirInfo struct {
+	hashes     map[string]string
+	duplicates map[string]string
+	dupSize    *int64
+	entries    []os.FileInfo
+	directory  string
+}
+
+func traverseDir(dirInfoVar dirInfo) error {
+	for _, entry := range dirInfoVar.entries {
+		fullpath := path.Join(dirInfoVar.directory, entry.Name())
 
 		if !entry.Mode().IsDir() && !entry.Mode().IsRegular() {
 			continue
@@ -29,29 +38,40 @@ func traverseDir(hashes, duplicates map[string]string, dupeSize *int64, entries 
 		if entry.IsDir() {
 			dirFiles, err := ioutil.ReadDir(fullpath)
 			if err != nil {
-				panic(err)
+				log.Println("fn: traverseDir, Error while reading dir ", err)
+				return err
 			}
-			traverseDir(hashes, duplicates, dupeSize, dirFiles, fullpath)
+			traverseDir(dirInfo{dirInfoVar.hashes, dirInfoVar.duplicates, dirInfoVar.dupSize, dirFiles, fullpath})
 			continue
 		}
 
-		hashString := createHash(fullpath)
-		checkDuplicates(fullpath, hashes, duplicates, dupeSize, entry, hashString)
+		hashString, err := createHash(fullpath)
+		if err != nil {
+			return err
+		}
+
+		checkDuplicates(fullpath, dirInfoVar.hashes, dirInfoVar.duplicates, dirInfoVar.dupSize, entry, hashString)
 	}
+
+	return nil
 }
 
-func createHash(fullpath string) string {
+func createHash(fullpath string) (string, error) {
 	file, err := ioutil.ReadFile(fullpath)
 	if err != nil {
-		panic(err)
+		log.Println("fn: createHash, Error while reading file ", err)
+		return "", err
+
 	}
 	hash := sha1.New()
 	if _, err := hash.Write(file); err != nil {
-		panic(err)
+		log.Println("fn: createHash, Error while creating sha ", err)
+		return "", err
+
 	}
 	hashSum := hash.Sum(nil)
 	hashString := fmt.Sprintf("%x", hashSum)
-	return hashString
+	return hashString, nil
 }
 
 func checkDuplicates(fullpath string, hashes, duplicates map[string]string, dupeSize *int64, entry os.FileInfo, hashString string) {
@@ -91,7 +111,9 @@ func main() {
 	if *dir == "" {
 		*dir, err = os.Getwd()
 		if err != nil {
-			panic(err)
+			log.Println("fn: main, Error while fetching working dir ", err)
+			return
+
 		}
 	}
 
@@ -101,10 +123,18 @@ func main() {
 
 	entries, err := ioutil.ReadDir(*dir)
 	if err != nil {
-		panic(err)
+		log.Println("fn: main, Error while reading dir ", err)
+		return
+
 	}
 
-	traverseDir(hashes, duplicates, &dupeSize, entries, *dir)
+	dirInfoVar := dirInfo{hashes, duplicates, &dupeSize, entries, *dir}
+
+	err = traverseDir(dirInfoVar)
+	if err != nil {
+		log.Println("fn: main, Error traversing dir ", err)
+		return
+	}
 
 	fmt.Println("DUPLICATES")
 
