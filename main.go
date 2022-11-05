@@ -4,6 +4,7 @@ import (
 	"crypto/sha1"
 	"flag"
 	"fmt"
+	"io/fs"
 	"io/ioutil"
 	"log"
 	"os"
@@ -19,41 +20,88 @@ const (
 	KB = 1000
 )
 
-type dirInfo struct {
+// type DirInfo interface {
+// 	Traverse() error
+// }
+
+// type fileInfo struct {
+// 	fullPath string
+// 	size     int64
+// 	hash     string
+// }
+
+// type dirInfo struct {
+// 	fullPath string
+// 	entries  []fs.FileInfo
+// }
+
+// func (f *fileInfo) Traverse() error {
+
+// }
+
+// func (d *dirInfo) Traverse() error {
+
+// }
+
+type duplicateInfo struct {
 	hashes     map[string]string
 	duplicates map[string]string
 	dupSize    *int64
-	entries    []os.FileInfo
-	directory  string
 }
 
-func traverseDir(dirInfoVar dirInfo) error {
-	for _, entry := range dirInfoVar.entries {
-		fullpath := path.Join(dirInfoVar.directory, entry.Name())
+func processDirectory(d *duplicateInfo, fullPath string) error {
+	dirFiles, err := ioutil.ReadDir(fullPath)
+	if err != nil {
+		log.Println("fn: traverseDir, Error while reading dir ", err)
+		return err
+	}
 
-		if !entry.Mode().IsDir() && !entry.Mode().IsRegular() {
-			continue
-		}
+	d.traverseDir(dirFiles, fullPath)
+
+	return nil
+}
+
+func processFile(d *duplicateInfo, entry fs.FileInfo, fullPath string) error {
+	hashString, err := createHash(fullPath)
+	if err != nil {
+		return err
+	}
+
+	d.checkDuplicates(fullPath, entry, hashString)
+	return nil
+}
+
+func (d *duplicateInfo) traverseDir(directoryOrFile []fs.FileInfo, parentDirectory string) error {
+
+	for _, entry := range directoryOrFile {
+		fullpath := path.Join(parentDirectory, entry.Name())
 
 		if entry.IsDir() {
-			dirFiles, err := ioutil.ReadDir(fullpath)
+			err := processDirectory(d, fullpath)
 			if err != nil {
-				log.Println("fn: traverseDir, Error while reading dir ", err)
 				return err
 			}
-			traverseDir(dirInfo{dirInfoVar.hashes, dirInfoVar.duplicates, dirInfoVar.dupSize, dirFiles, fullpath})
 			continue
 		}
 
-		hashString, err := createHash(fullpath)
-		if err != nil {
-			return err
+		if !entry.Mode().IsRegular() {
+			continue
 		}
 
-		checkDuplicates(fullpath, dirInfoVar.hashes, dirInfoVar.duplicates, dirInfoVar.dupSize, entry, hashString)
+		processFile(d, entry, fullpath)
+
 	}
 
 	return nil
+}
+
+func (d *duplicateInfo) checkDuplicates(fullpath string, entry os.FileInfo, hashString string) {
+	if hashEntry, ok := d.hashes[hashString]; ok {
+		d.duplicates[hashEntry] = fullpath
+		atomic.AddInt64(d.dupSize, entry.Size())
+	} else {
+		d.hashes[hashString] = fullpath
+	}
 }
 
 func createHash(fullpath string) (string, error) {
@@ -72,15 +120,6 @@ func createHash(fullpath string) (string, error) {
 	hashSum := hash.Sum(nil)
 	hashString := fmt.Sprintf("%x", hashSum)
 	return hashString, nil
-}
-
-func checkDuplicates(fullpath string, hashes, duplicates map[string]string, dupeSize *int64, entry os.FileInfo, hashString string) {
-	if hashEntry, ok := hashes[hashString]; ok {
-		duplicates[hashEntry] = fullpath
-		atomic.AddInt64(dupeSize, entry.Size())
-	} else {
-		hashes[hashString] = fullpath
-	}
 }
 
 func toReadableSize(nbytes int64) string {
@@ -121,16 +160,15 @@ func main() {
 	duplicates := map[string]string{}
 	var dupeSize int64
 
+	dupInfo := duplicateInfo{hashes, duplicates, &dupeSize}
+
 	entries, err := ioutil.ReadDir(*dir)
 	if err != nil {
 		log.Println("fn: main, Error while reading dir ", err)
 		return
-
 	}
 
-	dirInfoVar := dirInfo{hashes, duplicates, &dupeSize, entries, *dir}
-
-	err = traverseDir(dirInfoVar)
+	err = dupInfo.traverseDir(entries, *dir)
 	if err != nil {
 		log.Println("fn: main, Error traversing dir ", err)
 		return
