@@ -35,8 +35,8 @@ func Test_traverseDir(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			traverseDir(tt.args.hashes, tt.args.duplicates, tt.args.dupeSize, tt.args.entries, tt.args.directory)
-			fmt.Println(len(tt.args.duplicates))
-			fmt.Println(len(tt.args.hashes))
+			fmt.Println("Duplicates", len(tt.args.duplicates))
+			fmt.Println("hashes:", len(tt.args.hashes))
 
 			if len(tt.args.hashes) != 2 {
 				t.Error("Failure in running the test due to mismatch len in Hashes", len(tt.args.hashes))
